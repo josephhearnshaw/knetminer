@@ -7,6 +7,12 @@
 	<artifactId>client-base</artifactId>
 	<name>KnetMiner base client</name>
 	<packaging>war</packaging>
+	
+	<description>
+		A .war skeleton to implement a Knetminer web interface, which leverage the 
+		web service API. This is usually customised with specific UI files
+		(see aratiny and aratiny-client).
+	</description>
 
 	<parent>
 		<artifactId>common</artifactId>
@@ -129,6 +135,7 @@
 						html/GeneMap/dist/**,
 						html/GeneView/**,
 						html/image/**,
+						html/fonts/**,
 						html/javascript/**,
 						html/KnetMaps/dist/**,
 						WEB-INF/**

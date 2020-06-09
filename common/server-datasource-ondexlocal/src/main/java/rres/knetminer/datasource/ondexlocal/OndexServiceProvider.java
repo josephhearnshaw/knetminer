@@ -162,6 +162,11 @@ public class OndexServiceProvider {
      */
     private String sourceOrganization;
     
+    /**
+    * defaultExportedPublicationCount value
+    */
+    public static final String OPT_DEFAULT_NUMBER_PUBS = "defaultExportedPublicationCount";
+    
     /** 
      * The Date of graph creation
      */
@@ -508,8 +513,9 @@ public class OndexServiceProvider {
             }
             log.info("Building Lucene Index: " + indexFile.getAbsolutePath());
             luceneMgr = new LuceneEnv(indexFile.getAbsolutePath(), !indexFile.exists());
-            luceneMgr.addONDEXListener(new ONDEXLogger()); // sends certain events to the logger.
+            luceneMgr.addONDEXListener( new ONDEXLogger() ); // sends Ondex messages to the logger.
             luceneMgr.setONDEXGraph(graph);
+            luceneMgr.setReadOnlyMode ( true );
             log.info("Lucene Index created");
         } 
         catch (Exception e)
@@ -535,8 +541,17 @@ public class OndexServiceProvider {
         uFA.addOption(ArgumentNames.REMOVE_TAG_ARG, true);
 
         // TODO
-        uFA.addOption(ArgumentNames.CONCEPTCLASS_RESTRICTION_ARG, "Publication");
-        uFA.addOption(ArgumentNames.CONCEPTCLASS_RESTRICTION_ARG, "Chromosome");
+        List<String> ccRestrictionList = Arrays.asList("Publication", "Phenotype", "Protein",
+                "Drug", "Chromosome", "Path", "Comp", "Reaction", "Enzyme", "ProtDomain", "SNP",
+                "Disease", "BioProc", "Trait");
+        ccRestrictionList.stream().forEach(cc -> {
+            try {
+                uFA.addOption(ArgumentNames.CONCEPTCLASS_RESTRICTION_ARG, cc);
+            } catch (InvalidPluginArgumentException ex) {
+                log.info("Failed to restrict concept class " + cc + " due to error " + ex);
+            }
+        } );
+        log.info("Filtering concept classes " + ccRestrictionList);
 
         uFilter.setArguments(uFA);
         uFilter.setONDEXGraph(og);
@@ -661,7 +676,8 @@ public class OndexServiceProvider {
          * "CHEMBLTARGET", "EC", "EMBL", "ENSEMBL", "GENB", "GENOSCOPE", "GO", "INTACT",
          * "IPRO", "KEGG", "MC", "NC_GE", "NC_NM", "NC_NP", "NLM", "OMIM", "PDB",
          * "PFAM", "PlnTFDB", "Poplar-JGI", "PoplarCyc", "PRINTS", "PRODOM", "PROSITE",
-         * "PUBCHEM", "PubMed", "REAC", "SCOP", "SOYCYC", "TAIR", "TX", "UNIPROTKB"};
+         * "PUBCHEM", "PubMed", "REAC", "SCOP", "SOYCYC", "TAIR", "TX", "UNIPROTKB", "UNIPROTKB-COV",
+         * "ENSEMBL-HUMAN"};
          */
         Set<String> dsAcc = new HashSet<>(Arrays.asList(datasources));
 
@@ -671,6 +687,8 @@ public class OndexServiceProvider {
             log.info("No keyword, skipping Lucene stage, using mapGene2Concept instead");
             if (geneList != null) {
                 for (ONDEXConcept gene : geneList) {
+                    if (gene == null) continue;
+                    if (mapGene2Concepts.get(gene.getId()) == null) continue;
                     for (int conceptId : mapGene2Concepts.get(gene.getId())) {
                         ONDEXConcept concept = graph.getConcept(conceptId);
                         if (includePublications || !concept.getOfType().getId().equalsIgnoreCase("Publication")) {
@@ -682,7 +700,8 @@ public class OndexServiceProvider {
             return hit2score;
         }
 
-        // Analyzer analyzer = new StandardAnalyzer(Version.LUCENE_36);
+        // TODO: Actually, we should use LuceneEnv.DEFAULTANALYZER, which 
+        // consider different field types. See https://stackoverflow.com/questions/62119328
         Analyzer analyzer = new StandardAnalyzer();
 
         String keyword = keywords;
@@ -701,8 +720,6 @@ public class OndexServiceProvider {
                     + NOTQuery + ") OR Annotation:(" + NOTQuery + ") OR ConceptName:(" + NOTQuery + ") OR ConceptID:("
                     + NOTQuery + ")";
             String fieldNameNQ = getFieldName("ConceptName", null);
-            // QueryParser parserNQ = new QueryParser(Version.LUCENE_36, fieldNameNQ,
-            // analyzer);
             QueryParser parserNQ = new QueryParser(fieldNameNQ, analyzer);
             Query qNQ = parserNQ.parse(crossTypesNotQuery);
             NOTList = luceneMgr.searchTopConcepts(qNQ, 2000);
@@ -718,7 +735,6 @@ public class OndexServiceProvider {
         // search concept attributes
         for (AttributeName att : atts) {
             String fieldName = getFieldName("ConceptAttribute", att.getId());
-            // QueryParser parser = new QueryParser(Version.LUCENE_36, fieldName, analyzer);
             QueryParser parser = new QueryParser(fieldName, analyzer);
             Query qAtt = parser.parse(keyword);
             ScoredHits<ONDEXConcept> sHits = luceneMgr.searchTopConcepts(qAtt, max_concepts);
@@ -731,7 +747,6 @@ public class OndexServiceProvider {
             // LuceneQueryBuilder.searchConceptByConceptAccessionExact(keyword,
             // false, dsAcc);
             String fieldName = getFieldName("ConceptAccession", dsAc);
-            // QueryParser parser = new QueryParser(Version.LUCENE_36, fieldName, analyzer);
             QueryParser parser = new QueryParser(fieldName, analyzer);
             Query qAccessions = parser.parse(keyword);
             ScoredHits<ONDEXConcept> sHitsAcc = luceneMgr.searchTopConcepts(qAccessions, max_concepts);
@@ -742,8 +757,6 @@ public class OndexServiceProvider {
         // Query qNames =
         // LuceneQueryBuilder.searchConceptByConceptNameExact(keyword);
         String fieldNameCN = getFieldName("ConceptName", null);
-        // QueryParser parserCN = new QueryParser(Version.LUCENE_36, fieldNameCN,
-        // analyzer);
         QueryParser parserCN = new QueryParser(fieldNameCN, analyzer);
         Query qNames = parserCN.parse(keyword);
         ScoredHits<ONDEXConcept> sHitsNames = luceneMgr.searchTopConcepts(qNames, max_concepts);
@@ -753,8 +766,6 @@ public class OndexServiceProvider {
         // Query qDesc =
         // LuceneQueryBuilder.searchConceptByDescriptionExact(keyword);
         String fieldNameD = getFieldName("Description", null);
-        // QueryParser parserD = new QueryParser(Version.LUCENE_36, fieldNameD,
-        // analyzer);
         QueryParser parserD = new QueryParser(fieldNameD, analyzer);
         Query qDesc = parserD.parse(keyword);
         ScoredHits<ONDEXConcept> sHitsDesc = luceneMgr.searchTopConcepts(qDesc, max_concepts);
@@ -764,8 +775,6 @@ public class OndexServiceProvider {
         // Query qAnno =
         // LuceneQueryBuilder.searchConceptByAnnotationExact(keyword);
         String fieldNameCA = getFieldName("Annotation", null);
-        // QueryParser parserCA = new QueryParser(Version.LUCENE_36, fieldNameCA,
-        // analyzer);
         QueryParser parserCA = new QueryParser(fieldNameCA, analyzer);
         Query qAnno = parserCA.parse(keyword);
         ScoredHits<ONDEXConcept> sHitsAnno = luceneMgr.searchTopConcepts(qAnno, max_concepts);
@@ -997,16 +1006,16 @@ public class OndexServiceProvider {
                 results.add(new QTL(chrName, type, start, end, label, "", 1.0f, trait, tax_id));
             }
         } else {
+        		// TODO: actually LuceneEnv.DEFAULTANALYZER should be used for all fields
+        	  // This chooses the appropriate analyzer depending on the field.
+        	
             // be careful with the choice of analyzer: ConceptClasses are not
             // indexed in lowercase letters which let the StandardAnalyzer crash
-            // Analyzer analyzerSt = new StandardAnalyzer(Version.LUCENE_36);
+        		//
             Analyzer analyzerSt = new StandardAnalyzer();
-            // Analyzer analyzerWS = new WhitespaceAnalyzer(Version.LUCENE_36);
             Analyzer analyzerWS = new WhitespaceAnalyzer();
 
             String fieldCC = getFieldName("ConceptClass", null);
-            // QueryParser parserCC = new QueryParser(Version.LUCENE_36, fieldCC,
-            // analyzerWS);
             QueryParser parserCC = new QueryParser(fieldCC, analyzerWS);
             Query cC = parserCC.parse("Trait");
 
@@ -1108,20 +1117,21 @@ public class OndexServiceProvider {
             Set<ONDEXConcept> seed = graph.getConceptsOfConceptClass(ccGene);
             Set<ONDEXConcept> hits = new HashSet<ONDEXConcept>();
 
-            // create one regex string for efficient search
-            String query = "";
-            for (String acc : accessions) {
-                query += acc + "|";
-            }
-            query = query.substring(0, query.length() - 1);
-            for (ONDEXConcept gene : seed) {
-                if (gene.getAttribute(attTAXID) != null
-                        && taxID.contains(gene.getAttribute(attTAXID).getValue().toString())) {
 
-                    // search gene accessions, names, attributes
-                    if (OndexSearch.find(gene, query)) {
-                        hits.add(gene);
-                    }
+            for (ONDEXConcept gene : seed) {
+                if (gene.getAttribute(attTAXID) != null && taxID.contains(gene.getAttribute(attTAXID).getValue().toString())) {
+                    accessions.stream().map((acc) -> acc.replaceAll("^[\"()]+", "").replaceAll("[\"()]+$", "").toUpperCase()).map((acc) -> {
+                        // User may use accession ID's instead
+                        gene.getConceptNames().stream().filter((cno) -> (cno.getName().toUpperCase().equals(acc))).forEachOrdered((_item) -> {
+                            hits.add(gene);
+                        });
+                        return acc;
+                    }).forEachOrdered((acc) -> {
+                        // User may use accession ID's instead
+                        gene.getConceptAccessions().stream().filter((ca) -> (ca.getAccession().toUpperCase().equals(acc))).forEachOrdered((_item) -> {
+                            hits.add(gene);
+                        });
+                    });
                 }
             }
             return hits;
@@ -1205,7 +1215,8 @@ public class OndexServiceProvider {
         for (String k : key.split(" ")) {
             if (k.startsWith("\"")) {
                 if (k.endsWith("\"")) {
-                    result.add(k.substring(1, k.length() - 2));
+                   // result.add(k.substring(0, k.length() - 1));
+                   result.add(k.replace("\"", ""));
                 } else {
                     builtK = k.substring(1);
                 }
@@ -1516,16 +1527,13 @@ public class OndexServiceProvider {
             List<Integer> newPubIds = new ArrayList<Integer>();
 
             if (!pubKeywordSet.isEmpty()) {
-
                 // if  publications with keyword exist, keep most recent papers from pub-keyword set
-                newPubIds = PublicationUtils.newPubsByNumber(pubKeywordSet, attYear, 20);
+                newPubIds = PublicationUtils.newPubsByNumber(pubKeywordSet, attYear, Integer.parseInt((String) getOptions().get(OPT_DEFAULT_NUMBER_PUBS)));
 
             } else {
-
                 // if non of publication contains the keyword, just keep most recent papers from total set
-                newPubIds = PublicationUtils.newPubsByNumber(allPubs, attYear, 20);
+                newPubIds = PublicationUtils.newPubsByNumber(allPubs, attYear, Integer.parseInt((String) getOptions().get(OPT_DEFAULT_NUMBER_PUBS)));
             }
-
             // publications that we want to remove 
             allPubIds.removeAll(newPubIds);
 
@@ -2041,13 +2049,18 @@ public class OndexServiceProvider {
             for (ConceptAccession acc : gene.getConceptAccessions()) {
                 String accValue = acc.getAccession();
                 geneAcc = accValue;
-                if (acc.getElementOf().getId().equalsIgnoreCase("TAIR") && accValue.startsWith("AT")
-                        && (accValue.indexOf(".") == -1)) {
-                    geneAcc = accValue;
-                    break;
-                } else if (acc.getElementOf().getId().equalsIgnoreCase("PHYTOZOME")) {
-                    geneAcc = accValue;
-                    break;
+                if (acc.getElementOf().getId() != null) {
+                    if (acc.getElementOf().getId().equalsIgnoreCase("ENSEMBL-HUMAN")) {
+                        geneAcc = accValue;
+                        break;
+                    } else if (acc.getElementOf().getId().equalsIgnoreCase("TAIR") && accValue.startsWith("AT")
+                            && (accValue.indexOf(".") == -1)) {
+                        geneAcc = accValue;
+                        break;
+                    } else if (acc.getElementOf().getId().equalsIgnoreCase("PHYTOZOME")) {
+                        geneAcc = accValue;
+                        break;
+                    }
                 }
             }
             String chr = null;
@@ -2075,6 +2088,8 @@ public class OndexServiceProvider {
             } else {
                 beg = Integer.toString(begBP);
             }
+            
+            
 
             Double score = 0.0;
             if (scoredCandidates != null) {
@@ -2098,18 +2113,18 @@ public class OndexServiceProvider {
 
                     /* TODO: a TEMPORARY fix for a bug wr're seeing, we MUST apply a similar massage
                      * to ALL cases like this, and hence we MUST move this code to some utility. 
-                     */ 
-                    if ( qtl == null ) {
-                    	log.error ( "writeTable(): no gene found for id: ", cid );
-                    	continue;
+                     */
+                    if (qtl == null) {
+                        log.error("writeTable(): no gene found for id: ", cid);
+                        continue;
                     }
-                    String acc = Optional.ofNullable ( qtl.getConceptName () )
-                    	.map ( ConceptName::getName )
-                    	.map ( StringEscapeUtils::escapeCsv )
-                    	.orElseGet ( () -> {
-                    		log.error ( "writeTable(): gene name not found for id: {}", cid );
-                    		return "";
-                  	});
+                    String acc = Optional.ofNullable(qtl.getConceptName())
+                            .map(ConceptName::getName)
+                            .map(StringEscapeUtils::escapeCsv)
+                            .orElseGet(() -> {
+                                log.error("writeTable(): gene name not found for id: {}", cid);
+                                return "";
+                            });
 
                     String traitDesc = null;
                     if (attTrait != null && qtl.getAttribute(attTrait) != null) {
@@ -2136,7 +2151,7 @@ public class OndexServiceProvider {
 
                     // FIXME re-factor chromosome string
                     if (qtlChrom.equals(loc) && begCM >= qtlStart && begCM <= qtlEnd) {
-                        if ("".equals ( infoQTL )) {
+                        if ("".equals(infoQTL)) {
                             infoQTL += loci.getLabel() + "//" + loci.getTrait();
                         } else {
                             infoQTL += "||" + loci.getLabel() + "//" + loci.getTrait();
@@ -2189,7 +2204,7 @@ public class OndexServiceProvider {
             }
 
             AttributeName attYear = graph.getMetaData().getAttributeName("YEAR");
-            List<Integer> newPubs = PublicationUtils.newPubsByNumber(allPubs, attYear, 20);
+            List<Integer> newPubs = PublicationUtils.newPubsByNumber(allPubs, attYear, Integer.parseInt((String) getOptions().get(OPT_DEFAULT_NUMBER_PUBS)));
 
             String pubString = "Publication__" + allPubs.size() + "__";
             for (Integer pid : newPubs) {
@@ -2224,7 +2239,7 @@ public class OndexServiceProvider {
                 }
             }
 
-            String geneTaxID = gene.getAttribute(attTAXID).getValue().toString();
+            String geneTaxID = gene.getAttribute(attTAXID) != null ? gene.getAttribute(attTAXID).getValue().toString() : null;
 
             if (!evidence.equals("")) {
                 evidence = evidence.substring(0, evidence.length() - 2);
@@ -2262,10 +2277,14 @@ public class OndexServiceProvider {
                              + evidences_linked + "\t" + all_evidences*/ + "\n");
                 }
             }
+
+           
+
         }
-        log.info("Gene table generated...");
+         log.info("Gene table generated...");
         return out.toString();
     }
+
 
     /**
      * Write Evidence Table for Evidence View file
@@ -2450,7 +2469,6 @@ public class OndexServiceProvider {
                 key = "\"" + key + "\"";
             }
             log.info("Checking synonyms for " + key);
-            // Analyzer analyzer = new StandardAnalyzer(Version.LUCENE_36);
             Analyzer analyzer = new StandardAnalyzer();
             Map<Integer, Float> synonymsList = new HashMap<Integer, Float>();
             FloatValueComparator<Integer> comparator = new FloatValueComparator<Integer>(synonymsList);
@@ -2462,8 +2480,6 @@ public class OndexServiceProvider {
 
             // search concept names
             String fieldNameCN = getFieldName("ConceptName", null);
-            // QueryParser parserCN = new QueryParser(Version.LUCENE_36, fieldNameCN,
-            // analyzer);
             QueryParser parserCN = new QueryParser(fieldNameCN, analyzer);
             Query qNames = parserCN.parse(key);
             ScoredHits<ONDEXConcept> hitSynonyms = luceneMgr.searchTopConcepts(qNames, 500/* 100 */);
@@ -2805,8 +2821,9 @@ public class OndexServiceProvider {
         for (ONDEXConcept gene : genes) {
             if (gene.getAttribute(attTAXID) != null && gene.getAttribute(attChr) != null
                     && gene.getAttribute(attBeg) != null) {
-
-                String geneTaxID = gene.getAttribute(attTAXID).getValue().toString();
+                
+                //String geneTaxID = gene.getAttribute(attTAXID).getValue().toString();
+                String geneTaxID = Optional.ofNullable(gene.getAttribute(attTAXID).getValue().toString()).orElseGet(() -> " ");
                 String geneChr = gene.getAttribute(attChr).getValue().toString();
                 Integer geneBeg = (Integer) gene.getAttribute(attBeg).getValue();
                 // TEMPORARY FIX, to be disabled for new .oxl species networks that have string
@@ -2877,14 +2894,7 @@ public class OndexServiceProvider {
             qtls = graph.getConceptsOfConceptClass(ccQTL);
         }
 
-        Set<ONDEXConcept> seed = graph.getConceptsOfConceptClass(ccGene);
-        Set<ONDEXConcept> genes = new HashSet<ONDEXConcept>();
-        for (ONDEXConcept gene : seed) {
-            if (gene.getAttribute(attTAXID) != null
-                    && taxID.contains(gene.getAttribute(attTAXID).getValue().toString())) {
-                genes.add(gene);
-            }
-        }
+        Set<ONDEXConcept> genes = OndexServiceProviderHelper.getSeedGenes ( graph, taxID, this.getOptions () );
 
         if (file1.exists() && (file1.lastModified() < graphFile.lastModified())) {
             log.info("Graph file updated since hashmaps last built, deleting old hashmaps");
